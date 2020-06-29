@@ -13,94 +13,76 @@ from torch import optim
 import pylab
 import matplotlib.pyplot as plt
 from torchvision import datasets
+import os
+import pickle
 
 from sklearn import preprocessing
-
 from sklearn.datasets import fetch_openml
 from sklearn.model_selection import train_test_split
 batch_size = 64
 device = 'cuda'
-CLASS_SIZE = 10
-
-class MNISTDataset(Dataset):
-    
-    def __init__(self, transform=None):
-        self.mnist = fetch_openml('mnist_784', version=1,)
-        self.data = self.mnist.data.reshape(-1, 28, 28).astype('uint8')
-        self.target = self.mnist.target.astype(int)
-        self.indices = range(len(self))
-        self.transform = transform
-        
-    def __len__(self):
-        return len(self.data)
-    
-    def __getitem__(self, idx):
-        #idx2 = random.choice(self.indices)
-        data1 = self.data[idx]
-        #data2 = self.data[idx2]
-        target1 = torch.from_numpy(np.array(self.target[idx]))
-        #target2 = torch.from_numpy(np.array(self.target[idx2]))
-        if self.transform:
-            data1 = self.transform(data1)
-            target1 = torch.from_numpy(np.array(self.target[idx])) #torch.from_numpy()でTensorに変換
-                
-        return data1, target1
+CLASS_SIZE = 100
 
 class GloveDataset(Dataset):                                                                                            
-    def __init__(self, root, data_tensor=None, transform=None):
+    def __init__(self, root, label, data_tensor=None, transform=None):
         self.data_tensor = np.load(root)
+        self.target = label
         #mm = preprocessing.MinMaxScaler()
         #self.data_tensor = mm.fit_transform(self.data_tensor)
         self.indices = range(len(self))
-        self.transform = transforms.ToTensor()
+        #self.transform = transforms.ToTensor()
  
-    def __getitem__(self, index1):
-        index2 = random.choice(self.indices)
- 
-        data1 = self.data_tensor[index1]
-        data2 = self.data_tensor[index2] 
- 
-        return data1
+    def __getitem__(self, index):
+        data1 = self.data_tensor[index]
+        target = self.target[index]
+        return data1, target
  
     def __len__(self): 
-        #print(len(self.data_tensor))
         return len(self.data_tensor)
 
-transform = transforms.ToTensor()
-train_data = MNISTDataset(transform=ToTensor())
-#train_dataset = GloveDataset(root='/home/oza/pre-experiment/glove/numpy_vector/300d_wiki.npy')
+
+def pickle_load(path):
+    with open(path, mode='rb') as f:
+        data = pickle.load(f)
+        return data
+
+def get_category_list():
+    arr = np.empty((0, 300), dtype = 'float32')
+    check_list = []
+    label_list = []
+    i = 0
+    pickle_dir = os.listdir(path = '/home/oza/pre-experiment/glove/300d_dic')
+    for file_name in pickle_dir:
+        dic = pickle_load('/home/oza/pre-experiment/glove/300d_dic/' + file_name)
+        for mykey in dic.keys():
+            if mykey not in check_list:
+                check_list.append(mykey)
+                arr = np.append(arr, dic[mykey])
+                arr = arr.reshape(-1, 300)
+                label_list.append(i)
+        i += 1
+    label_list = np.array(label_list)
+    return label_list
+
+label_array = get_category_list()
 
 
-n_samples = len(train_data) # n_samples is 60000
-train_size = int(len(train_data) * 0.8) # train_size is 48000
-val_size = n_samples - train_size # val_size is 48000
-
-# shuffleしてから分割してくれる.
-train_dataset, val_dataset = torch.utils.data.random_split(train_data, [train_size, val_size])
-print(len(train_dataset)) # 48000
-print(len(val_dataset)) # 12000
-
+train_dataset = GloveDataset(root='/home/oza/pre-experiment/glove/numpy_vector/300d_wiki.npy', label=label_array)
 train_loader = DataLoader(train_dataset,
                           batch_size = batch_size,
                           shuffle = True)
 
 
-valid_loader = DataLoader(val_dataset,  
-                          batch_size = batch_size,
-                          shuffle = True)
-
 class CVAE(nn.Module):
     def __init__(self, z_dim):
-        super(CVAE, self).__init__()
-        self.dense_enc1 = nn.Linear(28*28 + CLASS_SIZE, 200)
-        #self.dense_enc1 = nn.Linear(300, 200)
-        self.dense_enc2 = nn.Linear(200, 100)
-        self.dense_encmean = nn.Linear(100, z_dim)
-        self.dense_encvar = nn.Linear(100, z_dim)
-        self.dense_dec1 = nn.Linear(z_dim, 100)
-        self.dense_dec2 = nn.Linear(100, 200)
-        self.dense_dec3 = nn.Linear(200, 28*28)
-        #self.dense_dec3 = nn.Linear(200, 300)
+        super(CVAE, self).__init__() 
+        self.dense_enc1 = nn.Linear(300 + CLASS_SIZE, 800)
+        self.dense_enc2 = nn.Linear(800, 400)
+        self.dense_encmean = nn.Linear(400, z_dim)
+        self.dense_encvar = nn.Linear(400, z_dim)
+        self.dense_dec1 = nn.Linear(z_dim, 400)
+        self.dense_dec2 = nn.Linear(400, 800)
+        self.dense_dec3 = nn.Linear(800, 300)
  
     def _encoder(self, x):
         x = F.relu(self.dense_enc1(x))
@@ -122,8 +104,8 @@ class CVAE(nn.Module):
     def _decoder(self,z):
         x = F.relu(self.dense_dec1(z))
         x = F.relu(self.dense_dec2(x))
-        x = F.sigmoid(self.dense_dec3(x))
-        #x = self.dense_dec3(x)
+        #x = F.sigmoid(self.dense_dec3(x))
+        x = self.dense_dec3(x)
         return x
 
     def forward(self, x):
@@ -135,33 +117,29 @@ class CVAE(nn.Module):
     def to_onehot(self, label): #ラベルをone-hotに変換, labelはリスト[0, 1, 5, 6, 8, 9]など
         return torch.eye(CLASS_SIZE, device=device, dtype=torch.float32)[label]
 
-    def loss(self, x, y, mean, var): #lossは交差エントロピーを採用している, MSEの事例もある
-        KL = -0.5 * torch.sum(1 + var - mean.pow(2) - var.exp()) 
-        y = y.to(device)
-        #delta = 1e-8
-        #reconstruction = torch.mean(torch.sum(x * torch.log(y + delta) + (1 - x) * torch.log(1 - y + delta)))
-        #reconstruction = F.binary_cross_entropy(y, x.view(-1, 784), size_average=False)
-        reconstruction = F.binary_cross_entropy(y, x, size_average=False)
-        return KL + reconstruction
 
 
 def train(model, optimizer, i):
         losses = []
         model.train()
         for x, label in train_loader: #data, label
-        #for x in train_loader:
-            print(label)
-            print(label.shape)
-            quit()
             label = model.to_onehot(label) #labelをone-hotに!  
-            x = x.view(x.shape[0], -1)
-            in_ = torch.empty((x.shape[0], 28*28 + CLASS_SIZE), device = device)
-            in_[:, :28*28] = x
-            in_[:, 28*28:] = label
+            #print(label)
+            #print(label.shape)
+            #print(x.shape)
+            
+            in_ = torch.empty((x.shape[0], 300 + CLASS_SIZE), device = device)
+            in_[:, :300] = x
+            in_[:, 300:] = label
             x = x.to(device)
             optimizer.zero_grad() #batchごとに勾配の更新
             y, mean, var, z = model(in_)
-            loss = model.loss(x, y, mean, var) / batch_size 
+            criterion = nn.MSELoss(size_average=False)
+            loss = criterion(x, y)
+            KL = -0.5 * torch.sum(1 + var - mean.pow(2) - var.exp())
+            loss += KL
+            loss = loss / batch_size
+            #loss = model.loss(x, y, mean, var) / batch_size 
             loss.backward()
             optimizer.step()
             losses.append(loss.cpu().detach().numpy())
@@ -172,11 +150,13 @@ def test(model, optimizer, i):
     model.eval()
     with torch.no_grad():
         for x, label in valid_loader: #data, label
+            print(label)
+            print(label.shape)
             x = x.view(x.shape[0], -1)
             label = model.to_onehot(label)
-            in_ = torch.empty((x.shape[0], 28*28 + CLASS_SIZE), device = device)
-            in_[:, :28*28] = x
-            in_[:, 28*28:] = label
+            in_ = torch.empty((x.shape[0], 300 + CLASS_SIZE), device = device)
+            in_[:, :300] = x
+            in_[:, 300:] = label
             x = x.to(device)
 
             y, mean, var, z = model(in_)                           
@@ -185,13 +165,13 @@ def test(model, optimizer, i):
     print("Epoch: {} test_loss: {}".format(i, np.average(losses)))
  
 def main():
-    model = CVAE(10).to(device)
+    model = CVAE(100).to(device)
     optimizer = optim.Adam(model.parameters(), lr = 0.001)
-    #model.train()
-    for i in range(50): #num epochs
+
+    for i in range(100): #num epochs
         train(model, optimizer, i)
-        test(model, optimizer, i)
-    torch.save(model.state_dict(), "mnist_param/mnist_test1_10.pth")
+        #test(model, optimizer, i)
+    #torch.save(model.state_dict(), "mnist_param/mnist_test1_10.pth")
 
 if __name__ == "__main__":
     main()                
