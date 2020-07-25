@@ -17,7 +17,7 @@ import pylab
 from sklearn.datasets import fetch_openml
 from sklearn.model_selection import train_test_split
  
-batch_size = 6000
+batch_size = 56000
 device = 'cuda'
 CLASS_SIZE = 10
 
@@ -113,6 +113,14 @@ def vis_data(model, train_loader):
     #z = Variable(mean, volatile=True).cpu().numpy() #batch_size問題のデバッグ
     plt.figure(figsize=(10, 10))
     plt.scatter(z[:, 0], z[:, 1], marker='.', c=label, cmap=pylab.cm.jet)
+    sum = 0
+    for i in range(10):
+        tmp  = np.where(label == i)
+        print(np.var(z[tmp]))
+        sum += np.var(z[tmp])
+    sum /= 10
+    print("Ave var: " + str(sum))
+    quit()
     plt.colorbar()
     plt.grid()
     plt.title('oza_CVAE_2dimention')
